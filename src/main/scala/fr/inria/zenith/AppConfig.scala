@@ -1,48 +1,50 @@
 package fr.inria.zenith
 
+import java.io.File
 import java.util.concurrent.TimeUnit
 
-import fr.inria.zenith.adt.TSToDBMulti.TSWithStats
+import fr.inria.zenith.TSToDBMulti.TSWithStats
 import org.apache.commons.cli.CommandLine
 
 import scala.collection.mutable
 import scala.math.{Numeric, pow, sqrt}
 
-/**
-  * Created by leva on 11/04/2019.
-  */
+
 case class AppConfig (cmd: CommandLine){
 
 
 
 
-  val tsFilePath = cmd.getOptionValue("tsFilePath", "")
-  val tsNum = cmd.getOptionValue("tsNum").toInt
-  val sizeSketches = cmd.getOptionValue("sizeSketches", "30").toInt
-  val gridDimension = cmd.getOptionValue("gridDimension", "2").toInt
-  val gridSize = cmd.getOptionValue("gridSize", "8").toInt
-  val cellSize = cmd.getOptionValue("cellSize", "2").toInt
+  val tsFilePath : String = cmd.getOptionValue("tsFilePath", "")
+  val tsNum : Int = cmd.getOptionValue("tsNum").toInt
+  val sizeSketches : Int = cmd.getOptionValue("sizeSketches", "30").toInt
+  val gridDimension : Int = cmd.getOptionValue("gridDimension", "2").toInt
+  val gridSize : Int = cmd.getOptionValue("gridSize", "8").toInt
+  val cellSize : Int = cmd.getOptionValue("cellSize", "2").toInt
 
-  val numPart = cmd.getOptionValue("numPart", "128").toInt
+  val numPart : Int = cmd.getOptionValue("numPart", "128").toInt
 
-  val gridsResPath = cmd.getOptionValue("gridsResPath", "ts_gridsdb" + "_" + tsNum + "_" + sizeSketches + "_" + gridDimension + "_" + gridSize)
+  val gridsResPath : String = cmd.getOptionValue("gridsResPath", "ts_gridsdb" + "_" + tsNum + "_" + sizeSketches + "_" + gridDimension + "_" + gridSize)
 
-  val queryFilePath = cmd.getOptionValue("queryFilePath", "")
-  val gridConstruction = cmd.getOptionValue("gridConstruction", "false").toBoolean
-  val queryResPath = cmd.getOptionValue("queryResPath", queryFilePath + "_result")
-  val saveResult = cmd.getOptionValue("saveResult", "true").toBoolean
-  val candThresh = cmd.getOptionValue("candThresh", "0").toFloat
-  val topCand = cmd.getOptionValue("topCand", "10").toInt
+  val queryFilePath : String = cmd.getOptionValue("queryFilePath", "")
+  val gridConstruction : Boolean = cmd.getOptionValue("gridConstruction", "false").toBoolean
+  val saveResult : Boolean = cmd.getOptionValue("saveResult", "true").toBoolean
+  val candThresh : Float = cmd.getOptionValue("candThresh", "0").toFloat
+  val topCand : Int = cmd.getOptionValue("topCand", "10").toInt
 
-  val sampleSize =  cmd.getOptionValue("sampleSize", "0.1").toFloat
+  val sampleSize : Float =  cmd.getOptionValue("sampleSize", "0.1").toFloat
 
 
   val numGroups = sizeSketches / gridDimension
 
+  val firstCol : Integer = cmd.getOptionValue("firstCol", "1").toInt
+
   /** PATHs **/
- // val RndMxPath = new Path(gridsResPath + "/config/RndMxGrids")
- // val urlHostsPath = new Path(gridsResPath + "/config/urlListDB")
-  val resPath = "/tmp/" + "sketch_" + tsFilePath +"_" + gridSize + "_" + queryFilePath + "_"
+
+ val inputFile = new File(tsFilePath)
+ val queryFile = new File(queryFilePath)
+
+  val resPath : String = "/tmp/" + "sketch_" + inputFile.getName +"_" + gridSize.toString + "_" + queryFile.getName + "_" + candThresh.toString + "_"
 
   val kryoClasses =   Array (
     classOf[Array[Float]],
@@ -61,7 +63,7 @@ case class AppConfig (cmd: CommandLine){
     Class.forName("scala.collection.mutable.WrappedArray$ofRef"),
     Class.forName("org.apache.spark.internal.io.FileCommitProtocol$TaskCommitMessage"),
     Class.forName("scala.collection.immutable.Set$EmptySet$")
-  ).toArray
+  )
 
 
 

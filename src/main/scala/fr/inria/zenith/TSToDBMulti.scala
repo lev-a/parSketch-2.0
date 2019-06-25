@@ -3,6 +3,7 @@ package fr.inria.zenith
 
 import org.apache.commons.cli.{BasicParser, CommandLine, Options}
 import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
 
@@ -12,14 +13,15 @@ import scala.collection.mutable
 /**
   * Usage:
   * Grid construction
-  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.adt.TSToDBMulti parSketch-1.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --batchSize int_val --gridConstruction true  --numPart int_val --tsNum int_val --nodesFile path
+  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.TSToDBMulti parSketch-2.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --batchSize int_val --gridConstruction true  --numPart int_val --tsNum int_val --sampleSize dec_val
 	*
   * Index creation
-  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.adt.TSToDBMulti parSketch-1.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --batchSize int_val  --numPart int_val --tsNum int_val
+  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.TSToDBMulti parSketch-2.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --batchSize int_val  --numPart int_val --tsNum int_val
   *
   * Query processing
-  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.adt.TSToDBMulti parSketch-1.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --queryFilePath path --candThresh dec_val --numPart int_val --tsNum int_val
+  * $SPARK_HOME/bin/spark-submit --class fr.inria.zenith.TSToDBMulti parSketch-2.0-SNAPSHOT-jar-with-dependencies.jar --tsFilePath path --sizeSketches int_val --gridDimension int_val --gridSize int_val --queryFilePath path --candThresh dec_val --numPart int_val --tsNum int_val --topCand int_val
   */
+
 object TSToDBMulti {
 
 
@@ -63,8 +65,7 @@ object TSToDBMulti {
 
   private def readRDD(sc: SparkContext, tsFile: String, config:  AppConfig) : DataStatsRDD = {
 
-   // val firstCol = config.firstCol
-   val firstCol = 1
+   val firstCol = config.firstCol
 
      val distFile = if ( Array("txt", "csv").contains(tsFile.slice(tsFile.length - 3, tsFile.length)) )
       (if (config.numPart == 0) sc.textFile(tsFile) else sc.textFile(tsFile, config.numPart))
@@ -76,29 +77,20 @@ object TSToDBMulti {
     distFile.map( ts => (ts._1, (ts._2, config.stats(ts._2))) )
   }
 
-  private def createBreakpoints (ts: DataStatsRDD, RandMxBroad: Array[Array[Float]], config:  AppConfig) : Array[Array[Float]] = {
+  private def createBreakpoints (ts: DataStatsRDD, RandMxBroad: Broadcast[Array[Array[Float]]], config:  AppConfig) : Array[Array[Float]] = {
 
     val sampleInput = ts.sample(false,config.sampleSize).map(t => config.normalize(t._2))
-    val sampleProject = sampleInput.map(t => config.mult(t, RandMxBroad)).collect.map(_.toArray).transpose
+    val sampleProject = sampleInput.map(t => config.mult(t, RandMxBroad.value)).collect.map(_.toArray).transpose
 
     val segmentSize = sampleProject(0).length / config.gridSize
- //   val numExtraSegments = length % (cellSize)
- //   val sliceBorder = (cellSize - numExtraSegments) * segmentSize
 
-   // sampleProject.map(toBreakpoint)
     sampleProject.map(_.take(segmentSize * config.gridSize)).map(_.sortWith(_ < _).sliding(segmentSize,segmentSize).map(_.last).toArray)
 
   }
-/*
-  def toBreakpoint (sk: Array[Float]) : Array[Float] = {
-    val s = sk.sortWith(_ < _)
-    (s.slice(0, sliceBorder).sliding(segmentSize, segmentSize) ++ s.slice(sliceBorder, s.length).sliding(segmentSize+1, segmentSize+1)).map(_.last).toArray
 
-  }
-*/
   private def rddToSketch(ts: DataStatsRDD, RandMxBroad: Array[Array[Float]], config:  AppConfig): RDD[(Long, Array[Array[Int]])] = ts.map(t => ( t._1 , config.tsToSketch(t._2, RandMxBroad)))
 
-  private def rddToProgrSketch(ts: DataStatsRDD, RandMxBroad: Array[Array[Float]], breakpoints: Array[Array[Float]], config:  AppConfig): RDD[(Long, Array[Array[Int]])] = ts.map(t => ( t._1 , config.tsProgrSketch(t._2, RandMxBroad, breakpoints)))
+  private def rddToProgrSketch(ts: DataStatsRDD, RandMxBroad: Broadcast[Array[Array[Float]]], breakpoints: Broadcast[Array[Array[Float]]], config:  AppConfig): RDD[(Long, Array[Array[Int]])] = ts.map(t => ( t._1 , config.tsProgrSketch(t._2, RandMxBroad.value, breakpoints.value)))
 
 
 
@@ -113,10 +105,6 @@ object TSToDBMulti {
     val config = AppConfig(cmd)
 
     val conf: SparkConf = new SparkConf().setAppName("Time Series Grid Construction")
- //   conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
- //       .set("spark.kryo.registrationRequired", "true")
- //   conf.registerKryoClasses(config.kryoClasses)
-
     val sc: SparkContext = new SparkContext(conf)
 
     val hdfs = FileSystem.get(sc.hadoopConfiguration)
@@ -152,7 +140,6 @@ object TSToDBMulti {
       val RandMx = hdfs.exists(RndMxPath) match {
         case true => sc.objectFile[Array[Float]](RndMxPath.toString, config.numPart).collect()
         case false => {
-          //  val sizeTS = distFileWithStats.first()._2._1.length
           val RandMx = config.ranD(config.sizeSketches, sizeTS)
           sc.parallelize(RandMx,config.numPart).saveAsObjectFile(RndMxPath.toString)
           RandMx
@@ -163,7 +150,7 @@ object TSToDBMulti {
       val breakpoints =   hdfs.exists(breakpointsPath) match {
         case true => sc.objectFile[Array[Float]](breakpointsPath.toString, config.numPart).collect()
         case false => {
-          val bpts = createBreakpoints(distFileWithStats, RandMxBC.value, config)
+          val bpts = createBreakpoints(distFileWithStats, RandMxBC, config)
           sc.parallelize(bpts,config.numPart).saveAsObjectFile(breakpointsPath.toString)
           bpts
         }
@@ -174,8 +161,7 @@ object TSToDBMulti {
       val bptsBC = sc.broadcast(breakpoints)
 
 
-   //   val inputSketchRDD = rddToSketch(distFileWithStats, RandMxBroad.value, config)
-      val inputSketchRDD = rddToProgrSketch(distFileWithStats, RandMxBC.value, bptsBC.value, config)
+      val inputSketchRDD = rddToProgrSketch(distFileWithStats, RandMxBC, bptsBC, config)
 
       inputSketchRDD
         .mapPartitionsWithIndex((index, part) => rdbStorage.insertPartition(urlList(index % config.numPart), part)).collect()
@@ -207,12 +193,9 @@ object TSToDBMulti {
 
       val queryStatsRDD = readRDD(sc, config.queryFilePath, config)
 
- //    val querySketchRDD = rddToSketch(queryStatsRDD, RandMxGrids, config)
-      val querySketchRDD = rddToProgrSketch(queryStatsRDD, RandMxSavedBC.value, bptsSavedBC.value, config)
-
+      val querySketchRDD = rddToProgrSketch(queryStatsRDD, RandMxSavedBC, bptsSavedBC, config)
 
       val queryGridsBC = sc.broadcast( querySketchRDD.collect() )
-
       val queryResFlt = sc.parallelize(0 until config.numPart, config.numPart).mapPartitions(index => rdbStorage.queryDB(urlListFile(index.next()), queryGridsBC.value, (config.candThresh * (config.sizeSketches / config.gridDimension)).toInt))
 
 
@@ -252,15 +235,7 @@ object TSToDBMulti {
     //    }
    //     else println ("No candidates found.")
       }
-      else {
- /*       breakable {
-          for (i <- 0.1 until candThresh by 0.1) {
-            val queryResFlt = queryRes.filter(_._2 > (i * (sizeSketches / gridDimension)).toInt)
-            println(s"candThresh = $i, candidates = " + queryResFlt.count)
-            if (queryResFlt.count <= 0) break
-          }
-        }
-  */    }
+
 
       val t5 = System.currentTimeMillis()
       println("QP + Save res  (Elapsed time): " + (t5 - t3) + " ms (" +  config.getMinSec(t5-t3) + ")")

@@ -10,7 +10,6 @@ import org.postgresql.util.PSQLException
   */
 class Storage (config:  AppConfig, cmd: CommandLine)  extends Serializable {
 
- // private val cmd  = config.cmd
 
   private val jdbcUsername = cmd.getOptionValue("jdbcUsername", "postgres")
   private val jdbcPassword = cmd.getOptionValue("jdbcPassword", "postgres")
